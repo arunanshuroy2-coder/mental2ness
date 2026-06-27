@@ -1,0 +1,6 @@
+{
+  "name": "Mental Wellness Tracker",
+  "description": "An empathetic student-focused mental wellness companion featuring secure local encryption, daily mood journaling with semantic parsing, trigger identification, customized study stress busters, and multi-model AI companions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
