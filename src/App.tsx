@@ -183,6 +183,11 @@ export default function App() {
   const [loginTab, setLoginTab] = useState<"student" | "parent">("student");
   const [loginUsername, setLoginUsername] = useState("johnsmith007");
   const [loginPassword, setLoginPassword] = useState("password123");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerFullName, setRegisterFullName] = useState("");
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerPasscode, setRegisterPasscode] = useState("");
   const [parentStudentCode, setParentStudentCode] = useState("STU-2026");
   const [parentPasscodeField, setParentPasscodeField] = useState("PARENT123");
 
@@ -533,6 +538,82 @@ export default function App() {
     }
   };
 
+  const runClientHeuristicAnalysis = (text: string): ParsedJournalAnalysis => {
+    const lowercase = text.toLowerCase();
+    
+    // 1. Detect emotions
+    const emotionTags: string[] = [];
+    if (lowercase.includes("anxious") || lowercase.includes("worry") || lowercase.includes("fear") || lowercase.includes("scared")) {
+      emotionTags.push("Test Anxiety");
+    }
+    if (lowercase.includes("stress") || lowercase.includes("overwhelm") || lowercase.includes("too much") || lowercase.includes("burden")) {
+      emotionTags.push("Overwhelm");
+    }
+    if (lowercase.includes("tired") || lowercase.includes("exhaust") || lowercase.includes("sleep") || lowercase.includes("burn")) {
+      emotionTags.push("Burnout");
+    }
+    if (lowercase.includes("fail") || lowercase.includes("marks") || lowercase.includes("bad") || lowercase.includes("mock") || lowercase.includes("low")) {
+      emotionTags.push("Self-Doubt");
+    }
+    if (emotionTags.length === 0) {
+      emotionTags.push("Academic Stress");
+    }
+
+    // 2. Identify primary trigger
+    let primaryTrigger = "General exam pressure and syllabus deadlines.";
+    if (lowercase.includes("mock") || lowercase.includes("test") || lowercase.includes("marks")) {
+      primaryTrigger = "Mock test performance relative to syllabus completion.";
+    } else if (lowercase.includes("sleep") || lowercase.includes("tired") || lowercase.includes("night")) {
+      primaryTrigger = "Sleep deprivation and physical fatigue.";
+    } else if (lowercase.includes("syllabus") || lowercase.includes("backlog")) {
+      primaryTrigger = "Syllabus deadline and study backlog anxiety.";
+    }
+
+    // 3. Sentiment & intensity
+    let sentimentScore = -0.3;
+    let stressIntensity = "Medium";
+    if (lowercase.includes("extremely") || lowercase.includes("panic") || lowercase.includes("terrible") || lowercase.includes("hate") || lowercase.includes("worst")) {
+      sentimentScore = -0.7;
+      stressIntensity = "High";
+    } else if (lowercase.includes("okay") || lowercase.includes("fine") || lowercase.includes("good") || lowercase.includes("hope") || lowercase.includes("calm")) {
+      sentimentScore = 0.1;
+      stressIntensity = "Low";
+    }
+
+    const isDistressCrisis = lowercase.includes("harm") || lowercase.includes("end it") || lowercase.includes("die") || lowercase.includes("suicide") || lowercase.includes("hopeless");
+
+    let piiMaskedText = text;
+    const namesToMask = ["alex", "john", "arunanshu", "sam", "priya", "rahul", "amit"];
+    for (const name of namesToMask) {
+      const regex = new RegExp(`\\b${name}\\b`, "gi");
+      piiMaskedText = piiMaskedText.replace(regex, "[STUDENT]");
+    }
+
+    const hasAcademicAnxiety = lowercase.includes("stud") || lowercase.includes("exam") || lowercase.includes("test") || lowercase.includes("mock") || lowercase.includes("syllabus") || lowercase.includes("math") || lowercase.includes("physics") || lowercase.includes("chemistry") || lowercase.includes("class") || lowercase.includes("school");
+
+    return {
+      sentimentScore,
+      emotionTags,
+      primaryTrigger,
+      stressIntensity,
+      isDistressCrisis,
+      piiMaskedText,
+      copingPlan: {
+        hasAcademicAnxiety,
+        encouragingMessage: "It's completely normal to feel overwhelmed during preparation. Remember, your score does not define your worth. Let's focus on small, micro-wins today.",
+        biteSizedSyllabusTracker: [
+          { topic: "Break down today's study target into 3 20-minute chunks", difficulty: "Easy", durationMinutes: 20 },
+          { topic: "Review formulas or basic summary notes for 15 minutes", difficulty: "Easy", durationMinutes: 15 },
+          { topic: "Solve just 2 high-priority questions without timing pressure", difficulty: "Medium", durationMinutes: 25 }
+        ],
+        mindfulnessExercise: {
+          title: "Box Breathing (4-4-4-4 Technique)",
+          description: "Inhale for 4 seconds, hold for 4 seconds, exhale for 4 seconds, hold empty for 4 seconds. Repeat 4 times to calm your nervous system."
+        }
+      }
+    };
+  };
+
   // 5. Daily Mood Journaling ingestion and server analysis
   const handleJournalAnalysis = async () => {
     if (!journalInput.trim()) {
@@ -608,8 +689,52 @@ export default function App() {
       setSelectedTags([]);
 
     } catch (err: any) {
-      console.error("Error analyzing journal:", err);
-      setAnalysisError("Could not parse your entry. Please ensure GEMINI_API_KEY is configured.");
+      console.warn("Error calling backend API, falling back to client-side rule-based analyzer:", err);
+      try {
+        const parsedAnalysis = runClientHeuristicAnalysis(fullTextToAnalyze);
+        
+        if (parsedAnalysis.isDistressCrisis) {
+          setNotificationToast("Crisis hotline activated. Support information is highlighted below.");
+        } else {
+          setNotificationToast("Log analyzed locally. Study plan and coping exercises updated!");
+        }
+
+        const encryptedPayload = await encryptText(journalInput, passcode);
+
+        const newEntry: JournalEntry = {
+          id: crypto.randomUUID(),
+          date: new Date().toISOString(),
+          encryptedText: encryptedPayload,
+          isEncrypted: true,
+          piiMaskedText: parsedAnalysis.piiMaskedText,
+          parsedAnalysis: parsedAnalysis,
+        };
+
+        const updatedEntries = [...entries, newEntry];
+        localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
+        setEntries(updatedEntries);
+        setCurrentAnalysis(parsedAnalysis);
+
+        setDecryptedTexts((prev) => ({
+          ...prev,
+          [newEntry.id]: journalInput,
+        }));
+
+        const todayDateStr = new Date().toDateString();
+        const lastLoggedDateStr = localStorage.getItem("mindful_scholar_last_log_date");
+        if (lastLoggedDateStr !== todayDateStr) {
+          const nextStreak = streakCount + 1;
+          setStreakCount(nextStreak);
+          localStorage.setItem("mindful_scholar_streak", nextStreak.toString());
+          localStorage.setItem("mindful_scholar_last_log_date", todayDateStr);
+        }
+
+        setJournalInput("");
+        setSelectedTags([]);
+      } catch (localErr) {
+        console.error("Local analyzer fallback failed:", localErr);
+        setAnalysisError("Could not parse or secure your entry. Please check your vault passcode.");
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -1081,92 +1206,285 @@ export default function App() {
 
               {/* VIEW 1: STUDENT LOGIN */}
               {loginTab === "student" && (
-                <div className="space-y-4">
-                  <div className="space-y-1 text-center md:text-left">
-                    <h2 className="text-xl font-bold tracking-tight text-[#1c2c26]">
-                      Student Workspaces
-                    </h2>
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      Write your private journal, explore adaptive syllabus coping plans, and unlock workspace widgets.
-                    </p>
-                  </div>
-
-                  {/* Manual form fields corresponding to the image */}
-                  <div className="space-y-3 pt-2">
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
-                        Username or email
-                      </label>
-                      <input
-                        type="text"
-                        value={loginUsername}
-                        onChange={(e) => setLoginUsername(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
-                      />
+                isRegistering ? (
+                  <div className="space-y-4">
+                    <div className="space-y-1 text-center md:text-left">
+                      <h2 className="text-xl font-bold tracking-tight text-[#1c2c26]">
+                        Create an Account
+                      </h2>
+                      <p className="text-xs text-gray-500 leading-relaxed">
+                        Set up your student wellness workspace profile and secure journal vault.
+                      </p>
                     </div>
 
-                    <div className="space-y-1">
-                      <div className="flex justify-between items-center">
+                    <div className="space-y-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
+                          Full Name
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Arunanshu Roy"
+                          value={registerFullName}
+                          onChange={(e) => setRegisterFullName(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
+                          Username or email
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. arunanshu"
+                          value={registerUsername}
+                          onChange={(e) => setRegisterUsername(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
                         <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
                           Password
                         </label>
-                        <a href="#forgot" onClick={(e) => e.preventDefault()} className="text-[10px] font-semibold text-[#5a6a4e] hover:underline">
-                          Forgot password?
-                        </a>
+                        <input
+                          type="password"
+                          placeholder="••••••••"
+                          value={registerPassword}
+                          onChange={(e) => setRegisterPassword(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
+                        />
                       </div>
-                      <input
-                        type="password"
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
-                      />
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
+                          Journal Vault 4-Digit Passcode (numbers/letters)
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={12}
+                          placeholder="e.g. 1234"
+                          value={registerPasscode}
+                          onChange={(e) => setRegisterPasscode(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800 font-mono tracking-widest text-center"
+                        />
+                        <p className="text-[9px] text-gray-400">This passcode encrypts your daily personal journaling in the browser vault.</p>
+                      </div>
+
+                      <button
+                        onClick={async () => {
+                          if (!registerFullName.trim()) {
+                            setNotificationToast("Please enter your full name.");
+                            return;
+                          }
+                          if (!registerUsername.trim()) {
+                            setNotificationToast("Please enter a username or email.");
+                            return;
+                          }
+                          if (!registerPassword.trim()) {
+                            setNotificationToast("Please enter a password.");
+                            return;
+                          }
+                          if (!registerPasscode.trim() || registerPasscode.trim().length < 4) {
+                            setNotificationToast("Please choose a secure vault passcode (at least 4 characters).");
+                            return;
+                          }
+
+                          try {
+                            const hash = await generatePasskeyHash(registerPasscode);
+                            localStorage.setItem("mindful_scholar_vault_hash", hash);
+                            setIsVaultInitialized(true);
+                            setPasscode(registerPasscode);
+
+                            const profile = {
+                              name: registerFullName,
+                              email: registerUsername.includes("@") ? registerUsername : `${registerUsername}@gmail.com`,
+                              mobile: "Add number",
+                              location: "USA",
+                              image: null,
+                              theme: appTheme,
+                              language: appLanguage,
+                              notificationStatus: "Allow"
+                            };
+                            localStorage.setItem("mindful_scholar_profile", JSON.stringify(profile));
+                            setProfileName(registerFullName);
+                            setProfileEmail(profile.email);
+
+                            const existingUsersRaw = localStorage.getItem("mindful_scholar_users");
+                            const existingUsers = existingUsersRaw ? JSON.parse(existingUsersRaw) : [];
+                            existingUsers.push({
+                              fullName: registerFullName,
+                              username: registerUsername.toLowerCase().trim(),
+                              password: registerPassword,
+                              passcode: registerPasscode,
+                              vaultHash: hash
+                            });
+                            localStorage.setItem("mindful_scholar_users", JSON.stringify(existingUsers));
+
+                            setNeedsAuth(false);
+                            setIsParentSession(false);
+                            setNotificationToast(`Welcome to Mindful Scholar, ${registerFullName}! Your secure vault is initialized. 📚`);
+                            
+                            seedParentDemoData();
+                            loadEntries();
+                            setIsRegistering(false);
+                          } catch (err) {
+                            console.error(err);
+                            setNotificationToast("Error creating account.");
+                          }
+                        }}
+                        className="w-full py-3 bg-[#1c2c26] text-white hover:bg-[#121f1a] transition-all rounded-2xl font-serif italic text-xs font-bold cursor-pointer shadow-sm text-center mt-2"
+                      >
+                        Create Account & Start
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] text-center text-gray-400">
+                      Already have an account?{" "}
+                      <button 
+                        onClick={() => setIsRegistering(false)} 
+                        className="font-bold text-[#5a6a4e] hover:underline cursor-pointer bg-transparent border-0 p-0"
+                      >
+                        Sign In
+                      </button>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-1 text-center md:text-left">
+                      <h2 className="text-xl font-bold tracking-tight text-[#1c2c26]">
+                        Student Workspaces
+                      </h2>
+                      <p className="text-xs text-gray-500 leading-relaxed">
+                        Write your private journal, explore adaptive syllabus coping plans, and unlock workspace widgets.
+                      </p>
+                    </div>
+
+                    {/* Manual form fields corresponding to the image */}
+                    <div className="space-y-3 pt-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
+                          Username or email
+                        </label>
+                        <input
+                          type="text"
+                          value={loginUsername}
+                          onChange={(e) => setLoginUsername(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] uppercase tracking-wider font-bold text-gray-500 block">
+                            Password
+                          </label>
+                          <a href="#forgot" onClick={(e) => e.preventDefault()} className="text-[10px] font-semibold text-[#5a6a4e] hover:underline">
+                            Forgot password?
+                          </a>
+                        </div>
+                        <input
+                          type="password"
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-[#1c2c26] text-gray-800"
+                        />
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          const enteredUser = loginUsername.toLowerCase().trim();
+                          const enteredPass = loginPassword;
+                          
+                          // Check local storage registered list
+                          const registeredUsersRaw = localStorage.getItem("mindful_scholar_users");
+                          const registeredUsers = registeredUsersRaw ? JSON.parse(registeredUsersRaw) : [];
+                          const matched = registeredUsers.find((u: any) => u.username === enteredUser && u.password === enteredPass);
+
+                          if (matched) {
+                            setProfileName(matched.fullName);
+                            setProfileEmail(matched.username.includes("@") ? matched.username : `${matched.username}@gmail.com`);
+                            setPasscode(matched.passcode);
+                            setIsVaultUnlocked(true);
+                            setIsVaultInitialized(true);
+                            
+                            // Set active profile
+                            const profile = {
+                              name: matched.fullName,
+                              email: matched.username.includes("@") ? matched.username : `${matched.username}@gmail.com`,
+                              mobile: "Add number",
+                              location: "USA",
+                              image: null,
+                              theme: appTheme,
+                              language: appLanguage,
+                              notificationStatus: "Allow"
+                            };
+                            localStorage.setItem("mindful_scholar_profile", JSON.stringify(profile));
+                            localStorage.setItem("mindful_scholar_vault_hash", matched.vaultHash);
+
+                            setNeedsAuth(false);
+                            setIsParentSession(false);
+                            setNotificationToast(`Welcome back, ${matched.fullName}! 📚`);
+                            loadEntries();
+                          } else {
+                            // Default / demo fallback to preserve user testing
+                            let finalName = profileName;
+                            if (enteredUser && enteredUser !== "johnsmith007") {
+                              const formattedName = enteredUser.split("@")[0].split(".")[0].replace(/^\w/, (c) => c.toUpperCase());
+                              finalName = formattedName;
+                              setProfileName(formattedName);
+                              setProfileEmail(enteredUser.includes("@") ? enteredUser : `${enteredUser}@gmail.com`);
+                            }
+                            setNeedsAuth(false);
+                            setIsParentSession(false);
+                            setNotificationToast(`Welcome to your workspace, ${finalName}! 📚`);
+                            seedParentDemoData();
+                            loadEntries();
+                          }
+                        }}
+                        className="w-full py-3 bg-[#1c2c26] text-white hover:bg-[#121f1a] transition-all rounded-2xl font-serif italic text-xs font-bold cursor-pointer shadow-sm text-center"
+                      >
+                        Sign In
+                      </button>
+                    </div>
+
+                    {/* Google Authenticator Option */}
+                    <div className="relative flex py-2 items-center">
+                      <div className="flex-grow border-t border-gray-100"></div>
+                      <span className="flex-shrink mx-4 text-[10px] uppercase tracking-wider text-gray-400 font-bold">or</span>
+                      <div className="flex-grow border-t border-gray-100"></div>
                     </div>
 
                     <button
-                      onClick={() => {
-                        // Log in directly using simulated account for easy testing
-                        setNeedsAuth(false);
-                        setIsParentSession(false);
-                        setNotificationToast(`Welcome back to your workspace, ${profileName}! 📚`);
-                        // Ensure we have some entries seeded for a beautiful view
-                        seedParentDemoData();
-                        loadEntries();
-                      }}
-                      className="w-full py-3 bg-[#1c2c26] text-white hover:bg-[#121f1a] transition-all rounded-2xl font-serif italic text-xs font-bold cursor-pointer shadow-sm text-center"
+                      onClick={handleGoogleLogin}
+                      disabled={isLoggingIn}
+                      className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 py-3 px-4 rounded-2xl hover:bg-gray-50 transition-all cursor-pointer shadow-xs font-semibold text-xs text-gray-700"
                     >
-                      Sign In
+                      {isLoggingIn ? (
+                        <span className="w-4 h-4 border-2 border-[#1c2c26] border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        </svg>
+                      )}
+                      <span>Sign in with Google</span>
                     </button>
+
+                    <p className="text-[10px] text-center text-gray-400">
+                      Are you new?{" "}
+                      <button 
+                        onClick={() => setIsRegistering(true)} 
+                        className="font-bold text-[#5a6a4e] hover:underline cursor-pointer bg-transparent border-0 p-0"
+                      >
+                        Create an Account
+                      </button>
+                    </p>
                   </div>
-
-                  {/* Google Authenticator Option */}
-                  <div className="relative flex py-2 items-center">
-                    <div className="flex-grow border-t border-gray-100"></div>
-                    <span className="flex-shrink mx-4 text-[10px] uppercase tracking-wider text-gray-400 font-bold">or</span>
-                    <div className="flex-grow border-t border-gray-100"></div>
-                  </div>
-
-                  <button
-                    onClick={handleGoogleLogin}
-                    disabled={isLoggingIn}
-                    className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 py-3 px-4 rounded-2xl hover:bg-gray-50 transition-all cursor-pointer shadow-xs font-semibold text-xs text-gray-700"
-                  >
-                    {isLoggingIn ? (
-                      <span className="w-4 h-4 border-2 border-[#1c2c26] border-t-transparent rounded-full animate-spin"></span>
-                    ) : (
-                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                      </svg>
-                    )}
-                    <span>Sign in with Google</span>
-                  </button>
-
-                  <p className="text-[10px] text-center text-gray-400">
-                    Are you new? <a href="#create" onClick={(e) => e.preventDefault()} className="font-bold text-[#5a6a4e] hover:underline">Create an Account</a>
-                  </p>
-                </div>
+                )
               )}
 
               {/* VIEW 2: PARENT LOGIN */}
