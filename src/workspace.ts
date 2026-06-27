@@ -125,3 +125,176 @@ export async function sendGoogleChatMessage(spaceId: string, messageText: string
     throw error;
   }
 }
+
+export interface CalendarEventItem {
+  id: string;
+  summary: string;
+  description?: string;
+  start: {
+    dateTime?: string;
+    date?: string;
+  };
+  end: {
+    dateTime?: string;
+    date?: string;
+  };
+  htmlLink?: string;
+}
+
+export interface ClassroomCourse {
+  id: string;
+  name: string;
+  section?: string;
+  descriptionHeading?: string;
+  alternateLink?: string;
+}
+
+export interface ClassroomCourseWork {
+  id: string;
+  courseId: string;
+  title: string;
+  description?: string;
+  alternateLink?: string;
+  dueDate?: {
+    year: number;
+    month: number;
+    day: number;
+  };
+  dueTime?: {
+    hours: number;
+    minutes: number;
+  };
+}
+
+/**
+ * Fetches upcoming primary Google Calendar events.
+ */
+export async function fetchGoogleCalendarEvents(): Promise<CalendarEventItem[]> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No active Google access token found. Please sign in.");
+  }
+  try {
+    const timeMin = new Date().toISOString();
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&singleEvents=true&orderBy=startTime&maxResults=20`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch Google Calendar: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    return data.items || [];
+  } catch (error) {
+    console.error("Error in fetchGoogleCalendarEvents:", error);
+    throw error;
+  }
+}
+
+/**
+ * Creates a new Google Calendar event.
+ */
+export async function createGoogleCalendarEvent(eventData: {
+  summary: string;
+  description: string;
+  start: string;
+  end: string;
+}): Promise<CalendarEventItem> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No active Google access token found. Please sign in.");
+  }
+  try {
+    const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        summary: eventData.summary,
+        description: eventData.description,
+        start: {
+          dateTime: eventData.start,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        },
+        end: {
+          dateTime: eventData.end,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const errDetails = await res.text();
+      throw new Error(`Failed to create Calendar Event: ${res.statusText} - ${errDetails}`);
+    }
+
+    return await res.json();
+  } catch (error) {
+    console.error("Error in createGoogleCalendarEvent:", error);
+    throw error;
+  }
+}
+
+/**
+ * Fetches active Google Classroom courses.
+ */
+export async function fetchGoogleClassroomCourses(): Promise<ClassroomCourse[]> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No active Google access token found. Please sign in.");
+  }
+  try {
+    const url = "https://classroom.googleapis.com/v1/courses?courseStates=ACTIVE";
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch Google Classroom courses: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    return data.courses || [];
+  } catch (error) {
+    console.error("Error in fetchGoogleClassroomCourses:", error);
+    throw error;
+  }
+}
+
+/**
+ * Fetches course work (assignments) for a specific active Classroom course.
+ */
+export async function fetchGoogleClassroomCourseWork(courseId: string): Promise<ClassroomCourseWork[]> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No active Google access token found. Please sign in.");
+  }
+  try {
+    const url = `https://classroom.googleapis.com/v1/courses/${courseId}/courseWork`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch Google Classroom coursework: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    return data.courseWork || [];
+  } catch (error) {
+    console.error("Error in fetchGoogleClassroomCourseWork:", error);
+    throw error;
+  }
+}
+

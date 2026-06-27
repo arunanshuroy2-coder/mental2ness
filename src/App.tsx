@@ -8,6 +8,8 @@ import CompanionChat from "./components/CompanionChat";
 import AnalyticsChart from "./components/AnalyticsChart";
 import ContactsMeetChat from "./components/ContactsMeetChat";
 import ParentDashboard from "./components/ParentDashboard";
+import ClassroomManager from "./components/ClassroomManager";
+import CalendarManager from "./components/CalendarManager";
 import { sendGoogleChatMessage } from "./workspace";
 import {
   Heart,
@@ -173,6 +175,34 @@ const t = (key: string, lang: string): string => {
   return langSet[key] || TRANSLATIONS["Eng"][key] || key;
 };
 
+const INNER_WORKSPACE_TABS_TRANSLATIONS: Record<string, Record<string, string>> = {
+  Eng: {
+    classroom: "Google Classroom",
+    calendar: "Google Calendar",
+    meet: "Meet & Peers"
+  },
+  Span: {
+    classroom: "Google Classroom",
+    calendar: "Google Calendar",
+    meet: "Meet y Compañeros"
+  },
+  Hindi: {
+    classroom: "गूगल क्लासरूम",
+    calendar: "गूगल कैलेंडर",
+    meet: "मीट और सहकर्मी"
+  },
+  Bengali: {
+    classroom: "গুগল ক্লাসরুম",
+    calendar: "গুগল ক্যালেন্ডার",
+    meet: "মিট ও সহকর্মী"
+  },
+  French: {
+    classroom: "Google Classroom",
+    calendar: "Google Calendar",
+    meet: "Meet & Contacts"
+  }
+};
+
 export default function App() {
   // Auth states
   const [user, setUser] = useState<User | null>(null);
@@ -243,6 +273,7 @@ export default function App() {
 
   // Active Bottom Tab
   const [activeTab, setActiveTab] = useState<"insights" | "workspace">("insights");
+  const [workspaceSubTab, setWorkspaceSubTab] = useState<"classroom" | "calendar" | "meet">("classroom");
 
   // Profile Modal & Edit States
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -602,9 +633,9 @@ export default function App() {
         hasAcademicAnxiety,
         encouragingMessage: "It's completely normal to feel overwhelmed during preparation. Remember, your score does not define your worth. Let's focus on small, micro-wins today.",
         biteSizedSyllabusTracker: [
-          { topic: "Break down today's study target into 3 20-minute chunks", difficulty: "Easy", durationMinutes: 20 },
-          { topic: "Review formulas or basic summary notes for 15 minutes", difficulty: "Easy", durationMinutes: 15 },
-          { topic: "Solve just 2 high-priority questions without timing pressure", difficulty: "Medium", durationMinutes: 25 }
+          { topic: "Break down today's study target into 3 20-minute chunks", difficulty: "Easy", durationMinutes: 20, completed: false },
+          { topic: "Review formulas or basic summary notes for 15 minutes", difficulty: "Easy", durationMinutes: 15, completed: false },
+          { topic: "Solve just 2 high-priority questions without timing pressure", difficulty: "Medium", durationMinutes: 25, completed: false }
         ],
         mindfulnessExercise: {
           title: "Box Breathing (4-4-4-4 Technique)",
@@ -893,6 +924,66 @@ export default function App() {
         }
       }
     });
+  };
+
+  // 8.5 Import a task from Google Classroom coursework into the student's active syllabus tracker
+  const handleImportClassroomTask = (taskTopic: string, durationMinutes: number = 30) => {
+    const newTask: SyllabusTask = {
+      topic: taskTopic,
+      difficulty: "Medium",
+      durationMinutes: durationMinutes,
+      completed: false
+    };
+
+    if (currentAnalysis) {
+      const tracker = currentAnalysis.copingPlan.biteSizedSyllabusTracker ? [...currentAnalysis.copingPlan.biteSizedSyllabusTracker] : [];
+      if (tracker.some(t => t.topic === taskTopic)) {
+        setNotificationToast("Task is already in your syllabus checklist!");
+        return;
+      }
+      tracker.push(newTask);
+      const updatedAnalysis: ParsedJournalAnalysis = {
+        ...currentAnalysis,
+        copingPlan: {
+          ...currentAnalysis.copingPlan,
+          biteSizedSyllabusTracker: tracker,
+        },
+      };
+      setCurrentAnalysis(updatedAnalysis);
+
+      // Update inside the entries log too
+      const updatedEntries = entries.map((e) => {
+        if (e.parsedAnalysis && e.parsedAnalysis.primaryTrigger === currentAnalysis.primaryTrigger) {
+          return {
+            ...e,
+            parsedAnalysis: updatedAnalysis,
+          };
+        }
+        return e;
+      });
+      localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
+      setEntries(updatedEntries);
+    } else {
+      // Create a fresh analysis containing this imported Classroom assignment
+      const newAnalysis: ParsedJournalAnalysis = {
+        sentimentScore: 0,
+        emotionTags: ["Classroom Focus"],
+        primaryTrigger: "Imported Classroom Assignment",
+        stressIntensity: "Low",
+        isDistressCrisis: false,
+        piiMaskedText: "",
+        copingPlan: {
+          hasAcademicAnxiety: true,
+          encouragingMessage: "Let's work systematically through your imported Classroom tasks. Small steps lead to big wins!",
+          biteSizedSyllabusTracker: [newTask],
+          mindfulnessExercise: {
+            title: "Task-Based Box Breathing",
+            description: "Breathe in for 4s, hold for 4s, exhale for 4s, hold for 4s. Complete 3 rounds before starting."
+          }
+        }
+      };
+      setCurrentAnalysis(newAnalysis);
+    }
   };
 
   // 9. Reminders Logic (Web Notifications)
@@ -2316,43 +2407,91 @@ export default function App() {
           </div>
         ) : (
           /* Tab workspace: contacts & meet & chat sharing integrations */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-            <ContactsMeetChat
-              onNotifyMeetCreated={(url) => {
-                setNotificationToast("Meet Room Scheduled! Shared options are open.");
-              }}
-              theme={appTheme}
-              language={appLanguage}
-            />
-            <div className={`rounded-[24px] p-6 border shadow-sm space-y-4 transition-all ${
-              isDark ? "bg-[#16221c] border-[#25372e]" : "bg-white border-[#e6e2da]"
-            }`}>
-              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 ${
-                isDark ? "text-[#e1eae5]" : "text-[#6b705c]"
-              }`}>
-                <Heart className="w-5 h-5 text-rose-500 fill-rose-50" />
-                Collaborative Peer Support Guide
-              </h3>
-              <p className={`text-xs leading-relaxed ${isDark ? "text-[#e1eae5]" : "text-[#58614c]"}`}>
-                Peer interactions dramatically lower exam anxiety. With the Mindful Scholar workspace:
-              </p>
-              <ol className={`text-xs space-y-3 pl-4 list-decimal leading-relaxed ${isDark ? "text-[#e1eae5]" : "text-[#58614c]"}`}>
-                <li>
-                  Use <strong>Schedule Instantly inside Meet</strong> to generate a unique room link using the Google Meet API.
-                </li>
-                <li>
-                  Retrieve your study buddies list from your <strong>Google Contacts</strong>.
-                </li>
-                <li>
-                  Share your active coping plans and customized syllabus sub-topics using the <strong>Google Chat Workspace</strong> integration. Just paste your group Space ID to sync live checklists.
-                </li>
-              </ol>
-              <div className={`p-3 rounded-xl border text-[10px] ${
-                isDark ? "bg-[#1d2f26]/40 border-[#2c4538] text-[#81a290]" : "bg-[#e6ebe0]/40 border-[#d4d9cc] text-[#5a6a4e]"
-              }`}>
-                🔒 <strong>Data Privacy Guarantee:</strong> These connections run directly in-browser using your Google access token. No third-party servers store your workspace contact or room logs.
-              </div>
+          <div className="space-y-6">
+            {/* Inner sub-tabs */}
+            <div className="flex border-b border-[#25372e]/40 dark:border-gray-700/60 pb-px overflow-x-auto scrollbar-none gap-2">
+              {[
+                { id: "classroom", label: "Google Classroom" },
+                { id: "calendar", label: "Google Calendar" },
+                { id: "meet", label: "Meet & Peers" }
+              ].map((tab) => {
+                const isTabActive = workspaceSubTab === tab.id;
+                const label = INNER_WORKSPACE_TABS_TRANSLATIONS[appLanguage]?.[tab.id] || INNER_WORKSPACE_TABS_TRANSLATIONS["Eng"][tab.id] || tab.label;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setWorkspaceSubTab(tab.id as any)}
+                    className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap cursor-pointer ${
+                      isTabActive
+                        ? isDark
+                          ? "border-[#cb997e] text-[#cb997e]"
+                          : "border-[#5a6a4e] text-[#5a6a4e]"
+                        : "border-transparent text-gray-400 hover:text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
+
+            {workspaceSubTab === "classroom" && (
+              <ClassroomManager
+                onImportTask={handleImportClassroomTask}
+                onShowToast={(msg) => setNotificationToast(msg)}
+                theme={appTheme}
+                language={appLanguage}
+              />
+            )}
+
+            {workspaceSubTab === "calendar" && (
+              <CalendarManager
+                onShowToast={(msg) => setNotificationToast(msg)}
+                theme={appTheme}
+                language={appLanguage}
+              />
+            )}
+
+            {workspaceSubTab === "meet" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                <ContactsMeetChat
+                  onNotifyMeetCreated={(url) => {
+                    setNotificationToast("Meet Room Scheduled! Shared options are open.");
+                  }}
+                  theme={appTheme}
+                  language={appLanguage}
+                />
+                <div className={`rounded-[24px] p-6 border shadow-sm space-y-4 transition-all ${
+                  isDark ? "bg-[#16221c] border-[#25372e]" : "bg-white border-[#e6e2da]"
+                }`}>
+                  <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                    isDark ? "text-[#e1eae5]" : "text-[#6b705c]"
+                  }`}>
+                    <Heart className="w-5 h-5 text-rose-500 fill-rose-50" />
+                    Collaborative Peer Support Guide
+                  </h3>
+                  <p className={`text-xs leading-relaxed ${isDark ? "text-[#e1eae5]" : "text-[#58614c]"}`}>
+                    Peer interactions dramatically lower exam anxiety. With the Mindful Scholar workspace:
+                  </p>
+                  <ol className={`text-xs space-y-3 pl-4 list-decimal leading-relaxed ${isDark ? "text-[#e1eae5]" : "text-[#58614c]"}`}>
+                    <li>
+                      Use <strong>Schedule Instantly inside Meet</strong> to generate a unique room link using the Google Meet API.
+                    </li>
+                    <li>
+                      Retrieve your study buddies list from your <strong>Google Contacts</strong>.
+                    </li>
+                    <li>
+                      Share your active coping plans and customized syllabus sub-topics using the <strong>Google Chat Workspace</strong> integration. Just paste your group Space ID to sync live checklists.
+                    </li>
+                  </ol>
+                  <div className={`p-3 rounded-xl border text-[10px] ${
+                    isDark ? "bg-[#1d2f26]/40 border-[#2c4538] text-[#81a290]" : "bg-[#e6ebe0]/40 border-[#d4d9cc] text-[#5a6a4e]"
+                  }`}>
+                    🔒 <strong>Data Privacy Guarantee:</strong> These connections run directly in-browser using your Google access token. No third-party servers store your workspace contact or room logs.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>

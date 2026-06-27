@@ -12,6 +12,10 @@ provider.addScope("https://www.googleapis.com/auth/meetings.space.created");
 provider.addScope("https://www.googleapis.com/auth/chat.messages.create");
 provider.addScope("https://www.googleapis.com/auth/userinfo.profile");
 provider.addScope("https://www.googleapis.com/auth/userinfo.email");
+provider.addScope("https://www.googleapis.com/auth/calendar");
+provider.addScope("https://www.googleapis.com/auth/classroom.courses.readonly");
+provider.addScope("https://www.googleapis.com/auth/classroom.coursework.me.readonly");
+provider.addScope("https://www.googleapis.com/auth/classroom.student-submissions.me.readonly");
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;

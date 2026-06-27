@@ -115,8 +115,8 @@ function runHeuristicAnalysis(text: string) {
 
 // 1. Journal Entry Semantic Analyzer
 app.post("/api/analyze-journal", async (req, res) => {
+  const { text } = req.body;
   try {
-    const { text } = req.body;
     if (!text || typeof text !== "string" || text.trim() === "") {
       return res.status(400).json({ error: "Journal text is required." });
     }
