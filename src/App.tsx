@@ -211,8 +211,8 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isParentSession, setIsParentSession] = useState(false);
   const [loginTab, setLoginTab] = useState<"student" | "parent">("student");
-  const [loginUsername, setLoginUsername] = useState("johnsmith007");
-  const [loginPassword, setLoginPassword] = useState("password123");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerFullName, setRegisterFullName] = useState("");
   const [registerUsername, setRegisterUsername] = useState("");
@@ -425,16 +425,40 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Load and parse entries after passcode verification
-  const loadEntries = () => {
+  // 2. Load and parse entries after passcode verification with dynamic decryption
+  const loadEntries = async (providedPasscode?: string) => {
+    const activePasscode = providedPasscode || passcode;
     const rawEntries = localStorage.getItem("mindful_scholar_entries");
     if (rawEntries) {
       try {
         const parsed: JournalEntry[] = JSON.parse(rawEntries);
-        setEntries(parsed);
+        
+        // Decrypt the encryptedAnalysis for each entry if present and passcode exists
+        const decryptedEntries = await Promise.all(
+          parsed.map(async (entry) => {
+            let decryptedAnalysis: ParsedJournalAnalysis | null = entry.parsedAnalysis;
+            
+            if (entry.isEncrypted && entry.encryptedAnalysis && activePasscode) {
+              try {
+                const decryptedStr = await decryptText(entry.encryptedAnalysis, activePasscode);
+                decryptedAnalysis = JSON.parse(decryptedStr);
+              } catch (decryptErr) {
+                console.warn("Failed to decrypt entry analysis for entry", entry.id, decryptErr);
+                decryptedAnalysis = null;
+              }
+            }
+            
+            return {
+              ...entry,
+              parsedAnalysis: decryptedAnalysis,
+            };
+          })
+        );
+
+        setEntries(decryptedEntries);
 
         // If we have an entry with study tasks, populate our syllabus tracker automatically with the latest
-        const latestWithTasks = [...parsed]
+        const latestWithTasks = [...decryptedEntries]
           .reverse()
           .find((e) => e.parsedAnalysis?.copingPlan?.biteSizedSyllabusTracker);
 
@@ -442,9 +466,45 @@ export default function App() {
           setCurrentAnalysis(latestWithTasks.parsedAnalysis);
         }
       } catch (err) {
-        console.error("Error reading journal logs:", err);
+        console.error("Error reading/decrypting journal logs:", err);
       }
     }
+  };
+
+  // Save journal entries safely to localStorage with encryption-at-rest for analyzed data
+  const saveEntries = async (entriesToSave: JournalEntry[], customPasscode?: string) => {
+    const activePasscode = customPasscode || passcode;
+    
+    const securedEntries = await Promise.all(
+      entriesToSave.map(async (entry) => {
+        // Only encrypt if it is flagged as encrypted and we have a passcode
+        if (!entry.isEncrypted || !activePasscode) {
+          return entry;
+        }
+
+        let encryptedAnalysis = entry.encryptedAnalysis;
+        if (entry.parsedAnalysis) {
+          try {
+            encryptedAnalysis = await encryptText(JSON.stringify(entry.parsedAnalysis), activePasscode);
+          } catch (err) {
+            console.error("Failed to encrypt parsed analysis:", err);
+          }
+        }
+
+        return {
+          id: entry.id,
+          date: entry.date,
+          encryptedText: entry.encryptedText,
+          isEncrypted: entry.isEncrypted,
+          piiMaskedText: entry.piiMaskedText,
+          encryptedAnalysis: encryptedAnalysis,
+          parsedAnalysis: null, // Keep plaintext analysis out of localStorage (at rest)
+        };
+      })
+    );
+
+    localStorage.setItem("mindful_scholar_entries", JSON.stringify(securedEntries));
+    setEntries(entriesToSave); // Maintain plaintext decrypted entries in React memory
   };
 
   // 3. Handle Google Authentication Login
@@ -541,7 +601,7 @@ export default function App() {
       setIsVaultInitialized(true);
       setIsVaultUnlocked(true);
       setVaultError(null);
-      loadEntries();
+      await loadEntries(passcode);
       setNotificationToast("Secure cryptographic vault created successfully!");
     } catch (err) {
       setVaultError("Could not initialize secure vault.");
@@ -559,7 +619,7 @@ export default function App() {
       if (storedHash === calculatedHash) {
         setIsVaultUnlocked(true);
         setVaultError(null);
-        loadEntries();
+        await loadEntries(passcode);
         setNotificationToast("Vault unlocked. Your journal entries decrypted.");
       } else {
         setVaultError("Incorrect passcode. Try again.");
@@ -695,8 +755,7 @@ export default function App() {
 
       // Save to localStorage
       const updatedEntries = [...entries, newEntry];
-      localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
-      setEntries(updatedEntries);
+      await saveEntries(updatedEntries);
       setCurrentAnalysis(parsedAnalysis);
 
       // Cache decrypted text for this entry instantly
@@ -742,8 +801,7 @@ export default function App() {
         };
 
         const updatedEntries = [...entries, newEntry];
-        localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
-        setEntries(updatedEntries);
+        await saveEntries(updatedEntries);
         setCurrentAnalysis(parsedAnalysis);
 
         setDecryptedTexts((prev) => ({
@@ -788,10 +846,9 @@ export default function App() {
       isOpen: true,
       title: "Delete Journal Entry",
       message: "Confirm: Permanently delete this encrypted journal entry? This action cannot be undone.",
-      onConfirm: () => {
+      onConfirm: async () => {
         const updated = entries.filter((e) => e.id !== id);
-        localStorage.setItem("mindful_scholar_entries", JSON.stringify(updated));
-        setEntries(updated);
+        await saveEntries(updated);
         if (currentAnalysis && entries.find((e) => e.id === id)?.parsedAnalysis === currentAnalysis) {
           setCurrentAnalysis(null);
         }
@@ -857,7 +914,7 @@ export default function App() {
   };
 
   // 7. Toggle Syllabus task completed state
-  const handleToggleSyllabusTask = (idx: number) => {
+  const handleToggleSyllabusTask = async (idx: number) => {
     if (!currentAnalysis || !currentAnalysis.copingPlan.biteSizedSyllabusTracker) return;
 
     const tracker = [...currentAnalysis.copingPlan.biteSizedSyllabusTracker];
@@ -887,8 +944,7 @@ export default function App() {
       return e;
     });
 
-    localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
-    setEntries(updatedEntries);
+    await saveEntries(updatedEntries);
   };
 
   // 8. Share coping plan to Google Chat Space
@@ -927,7 +983,7 @@ export default function App() {
   };
 
   // 8.5 Import a task from Google Classroom coursework into the student's active syllabus tracker
-  const handleImportClassroomTask = (taskTopic: string, durationMinutes: number = 30) => {
+  const handleImportClassroomTask = async (taskTopic: string, durationMinutes: number = 30) => {
     const newTask: SyllabusTask = {
       topic: taskTopic,
       difficulty: "Medium",
@@ -961,8 +1017,7 @@ export default function App() {
         }
         return e;
       });
-      localStorage.setItem("mindful_scholar_entries", JSON.stringify(updatedEntries));
-      setEntries(updatedEntries);
+      await saveEntries(updatedEntries);
     } else {
       // Create a fresh analysis containing this imported Classroom assignment
       const newAnalysis: ParsedJournalAnalysis = {
@@ -1413,12 +1468,13 @@ export default function App() {
                             });
                             localStorage.setItem("mindful_scholar_users", JSON.stringify(existingUsers));
 
+                            setIsVaultUnlocked(true);
                             setNeedsAuth(false);
                             setIsParentSession(false);
                             setNotificationToast(`Welcome to Mindful Scholar, ${registerFullName}! Your secure vault is initialized. 📚`);
                             
                             seedParentDemoData();
-                            loadEntries();
+                            await loadEntries(registerPasscode);
                             setIsRegistering(false);
                           } catch (err) {
                             console.error(err);
@@ -1484,7 +1540,7 @@ export default function App() {
                       </div>
 
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const enteredUser = loginUsername.toLowerCase().trim();
                           const enteredPass = loginPassword;
                           
@@ -1517,11 +1573,11 @@ export default function App() {
                             setNeedsAuth(false);
                             setIsParentSession(false);
                             setNotificationToast(`Welcome back, ${matched.fullName}! 📚`);
-                            loadEntries();
+                            await loadEntries(matched.passcode);
                           } else {
                             // Default / demo fallback to preserve user testing
                             let finalName = profileName;
-                            if (enteredUser && enteredUser !== "johnsmith007") {
+                            if (enteredUser) {
                               const formattedName = enteredUser.split("@")[0].split(".")[0].replace(/^\w/, (c) => c.toUpperCase());
                               finalName = formattedName;
                               setProfileName(formattedName);
@@ -1531,7 +1587,7 @@ export default function App() {
                             setIsParentSession(false);
                             setNotificationToast(`Welcome to your workspace, ${finalName}! 📚`);
                             seedParentDemoData();
-                            loadEntries();
+                            await loadEntries();
                           }
                         }}
                         className="w-full py-3 bg-[#1c2c26] text-white hover:bg-[#121f1a] transition-all rounded-2xl font-serif italic text-xs font-bold cursor-pointer shadow-sm text-center"
@@ -1623,7 +1679,7 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (!parentStudentCode.trim() || !parentPasscodeField.trim()) {
                           alert("Please fill in the student workspace ID and passcode.");
                           return;
@@ -1632,9 +1688,10 @@ export default function App() {
                         seedParentDemoData();
                         setIsParentSession(true);
                         setNeedsAuth(false);
+                        setPasscode(parentPasscodeField);
                         setNotificationToast(`Parent monitoring panel unlocked for student: ${profileName}! 🔐`);
-                        // Explicitly load entries to render seeded metrics immediately
-                        loadEntries();
+                        // Explicitly load entries with provided student passcode to render metrics immediately
+                        await loadEntries(parentPasscodeField);
                       }}
                       className="w-full py-3 bg-[#1c2c26] text-white hover:bg-[#121f1a] transition-all rounded-2xl font-serif italic text-xs font-bold cursor-pointer shadow-sm text-center"
                     >

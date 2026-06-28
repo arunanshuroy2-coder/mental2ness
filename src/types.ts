@@ -33,6 +33,7 @@ export interface JournalEntry {
   encryptedText: string; // AES-GCM encrypted base64 payload
   isEncrypted: boolean;
   piiMaskedText: string; // Stored unencrypted for light visual logs if desired, or fully empty till unlocked
+  encryptedAnalysis?: string; // Encrypted ParsedJournalAnalysis JSON payload
   parsedAnalysis: ParsedJournalAnalysis | null;
 }
 
